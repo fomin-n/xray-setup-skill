@@ -137,7 +137,86 @@ bash scripts/check_marzban.sh
 | SSH tunnel not established | Run: `ssh -N -L 8000:127.0.0.1:8000 <user>@<server>` |
 | Marzban container not running | `docker compose -f /opt/marzban/docker-compose.yml up -d` |
 | Wrong tunnel port | Verify tunnel is mapping local:8000 → remote:8000 |
-| Browser cached redirect | Try `http://localhost:8000/dashboard/` (HTTP, not HTTPS) |
+| Wrong URL path | Navigate to `http://localhost:8000/dashboard/` — the root `/` shows a loading animation that never resolves |
+| Browser cached redirect | Clear cache; use `http://localhost:8000/dashboard/` (HTTP, not HTTPS) |
+
+---
+
+### 16. Marzban dashboard shows infinite loading animation
+
+**Symptom:** Browser shows a spinning/pulsing animation at `http://localhost:8000` and
+never loads the login form.
+
+**Cause:** The Marzban web app entrypoint is `/dashboard/`, not `/`. The root path
+serves only the loading animation without the JavaScript bundle.
+
+**Fix:** Navigate to `http://localhost:8000/dashboard/` (with trailing slash).
+
+---
+
+### 17. Marzban database wiped after container update
+
+**Symptom:** All users, admin account, and settings are gone after
+`docker compose pull && docker compose up -d`.
+
+**Cause:** Default SQLite path `/code/db.sqlite3` is inside the container
+image layer — it does not persist across container recreation.
+
+**Fix:** Set a host-mounted path in `.env`:
+```
+SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"
+```
+
+Then create the directory and restart:
+```bash
+🌐 VPS
+sudo mkdir -p /var/lib/marzban
+cd /opt/marzban && sudo docker compose down && sudo docker compose up -d
+```
+
+Ensure `/var/lib/marzban` is mounted in `docker-compose.yml`:
+```yaml
+volumes:
+  - /var/lib/marzban:/var/lib/marzban
+```
+
+---
+
+### 18. Xray fallback broken — browser gets TLS error or wrong page
+
+**Symptom:** Visiting `https://<domain>` with a browser (not a VLESS client) gets
+a TLS error or unexpected response instead of the fallback website.
+
+**Cause 1 — ALPN mismatch:** If `alpn` includes `"h2"` in the Xray TLS config and the
+fallback backend is nginx 1.18, the fallback connection will fail. nginx 1.18 does not
+support h2c (HTTP/2 cleartext).
+
+**Fix:** Remove `"h2"` from `alpn` in the Xray TLS config. Use `["http/1.1"]` only.
+VLESS clients are not ALPN-sensitive — this does not affect VPN connectivity.
+
+**Cause 2 — Fallback backend not running:** Check nginx is listening on the fallback
+port: `ss -tlnp | grep :8080`
+
+---
+
+### 19. `tee` or file write produces 0-byte file via SSH heredoc with sudo
+
+**Symptom:** `cat << 'EOF' | ssh user@host "sudo tee /etc/file"` creates an
+empty file.
+
+**Cause:** `sudo -S` (or piped sudo) reads its password from stdin, consuming
+the entire pipe before `tee` runs. The file is created empty.
+
+**Fix:** Write to a temp file without sudo, then move it:
+```bash
+🌐 VPS (via SSH)
+cat << 'EOF' > /tmp/myfile
+...content...
+EOF
+sudo mv /tmp/myfile /etc/destination/file
+```
+
+Or use a two-step SSH call: first heredoc to `/tmp`, then `sudo mv`.
 
 ---
 
@@ -165,20 +244,20 @@ See `rollback.md#ssh-lockout-recovery` for emergency console procedure.
 
 ---
 
-### 10. Angie returns 502 Bad Gateway
+### 10. nginx / Angie returns 502 Bad Gateway
 
 ```bash
 🌐 VPS
-sudo angie -t
-sudo journalctl -u angie --since "5 minutes ago"
+sudo nginx -t
+sudo journalctl -u nginx --since "5 minutes ago"
 docker ps | grep xray
 ```
 
 | Likely cause | Resolution |
 |-------------|-----------|
-| Xray not listening on upstream port | Start Xray; check port in Angie `proxy_pass` matches Xray listen port |
-| proxy_protocol mismatch | Both Angie `proxy_protocol on` and Xray `acceptProxyProtocol: true` must be set |
-| Permission denied on socket | Check Angie user has access to loopback |
+| Xray not listening on upstream port | Start Xray; check port in nginx `proxy_pass` matches Xray listen port |
+| proxy_protocol mismatch | Both nginx `proxy_protocol on` and Xray `acceptProxyProtocol: true` must be set |
+| Permission denied on socket | Check nginx user has access to loopback |
 
 ---
 
@@ -255,8 +334,8 @@ docker logs marzban --tail 50 2>&1
 # Port state
 ss -tlnp
 
-# Angie status
-sudo systemctl status angie
+# nginx / Angie status
+sudo systemctl status nginx
 ```
 
 ## See also

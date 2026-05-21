@@ -15,6 +15,26 @@ This breaks:
 
 ---
 
+## Mixed A records / hosting provider parking IPs
+
+**Symptom:** `certbot certonly` fails with HTTP 403 from an unexpected IP.
+Example: `Invalid response from http://<domain>/.well-known/acme-challenge/... 403`
+
+**Cause:** Your domain has multiple A records — your VPS IP plus parking IPs
+from the registrar or an old host (e.g., GoDaddy). The ACME verifier follows
+DNS and may hit the parking IP, which returns 403.
+
+**Fix:** Remove all A records except your VPS IP. Check with:
+```bash
+🖥 LOCAL
+dig +short A <YOUR_DOMAIN>
+```
+
+All returned IPs must be your server IP. If extra IPs appear, go to your DNS
+provider and remove them before running certbot.
+
+---
+
 ## Path C decision
 
 ```

@@ -377,21 +377,37 @@ Update log: Xray config path, transport, port.
 
 ---
 
-## Phase 11 — Angie Proxy (TLS path only)
+## Phase 11 — nginx / Angie Proxy (TLS path only)
 
 Skip for REALITY path (Path A).
 
 Consult `references/angie-proxy.md`.
+
+**Use nginx** on Ubuntu 22.04 LTS — Angie has no apt repository for this
+distro. On Ubuntu 24.04+ or Debian 12+, either is fine.
 
 Check DNS first:
 ```
 bash skills/xray-setup/scripts/check_dns.sh DOMAIN SERVER_IP
 ```
 
-**Gate:** DNS must resolve correctly before certbot runs.
+**Gate:** DNS must resolve correctly before certbot runs. All A records for
+the domain must point to the server IP — remove any registrar parking IPs.
+See `references/cloudflare.md` for the mixed A records issue.
 
-Install Angie and obtain TLS cert via SSH (see `references/angie-proxy.md`
-for the full commands). All commands run via `ssh -p PORT USER@HOST '...'`.
+**For Marzban setups** (Phase 12 enabled): nginx only handles port 80.
+Xray binds port 443 directly. Install nginx for certbot only:
+```
+ssh -p PORT USER@HOST 'apt-get install -y nginx certbot'
+```
+
+**For standalone Xray** (no Marzban): install nginx as TLS terminator and
+configure proxy_protocol to Xray. See `references/angie-proxy.md`.
+
+Obtain TLS cert:
+```
+ssh -p PORT USER@HOST 'certbot certonly --webroot -w /var/www/html -d DOMAIN'
+```
 
 Validate TLS locally:
 ```
@@ -423,13 +439,18 @@ ENV
 Copy and start Marzban via SSH. See `references/marzban.md` for full
 docker-compose.yml and startup commands.
 
-Create admin account (interactive — user must run this themselves):
+Create admin account — requires an interactive terminal. Instruct the user
+to run this themselves in their terminal (not via automated SSH):
 ```
-ssh -p PORT -t USER@HOST 'cd /opt/marzban && docker compose exec -it marzban marzban-cli admin create --sudo'
+ssh -p PORT USER@HOST
+cd /opt/marzban && sudo docker compose exec -it marzban marzban-cli admin create --sudo
 ```
 
-The `-t` flag allocates a PTY for the interactive prompt. Admin username
-and password are entered interactively — they never appear in this chat.
+Admin username and password are entered interactively — they never appear
+in this chat. Remind the user to store credentials in a password manager.
+
+If the user cannot open an interactive session, use the non-interactive
+method from `references/marzban.md` (MARZBAN_ADMIN_PASSWORD env var).
 
 Configure dashboard access — SSH tunnel by default:
 ```

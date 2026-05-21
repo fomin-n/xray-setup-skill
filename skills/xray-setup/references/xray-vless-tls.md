@@ -3,28 +3,39 @@
 ## When to use
 
 Path B: Fresh VPS, domain A record points directly at server IP, Cloudflare
-is either not used or set to DNS-only (grey-cloud). Angie handles TLS
-termination and passes VLESS traffic to Xray via `proxy_protocol`.
+is either not used or set to DNS-only (grey-cloud).
 
-## Prerequisites
+**Two variants:**
+
+- **Standalone Xray** (this document): nginx handles TLS on port 443, passes
+  VLESS traffic to Xray on loopback via `proxy_protocol`. Use when managing
+  Xray without Marzban.
+
+- **Marzban-managed Xray** (`references/marzban.md`): Xray handles TLS on
+  port 443 directly (`network_mode: host`). nginx only on port 80 for certbot
+  renewal and HTTP→HTTPS redirect. Use when you want the Marzban panel.
+
+## Prerequisites (standalone path)
 
 - Domain A record → server IP confirmed (`scripts/check_dns.sh`)
 - Docker installed (`references/docker.md`)
-- Angie installed (`references/angie-proxy.md`)
+- nginx installed (`references/angie-proxy.md`)
 - Firewall open on 80 and 443 (`references/firewall.md`)
 - UUID generated for each user (`references/secrets.md`)
 
 ---
 
-## Architecture reminder
+## Architecture (standalone Xray — no Marzban)
 
 ```
-Client → :443 → Angie (TLS termination) → proxy_protocol → Xray :11443
+Client → :443 → nginx (TLS termination) → proxy_protocol → Xray :11443
                        └→ HTTPS fallback site (non-VLESS traffic)
 ```
 
 Xray does NOT listen on 443 directly. It listens on a loopback or internal
-port (e.g., 11443), and Angie routes VLESS traffic to it.
+port (e.g., 11443), and nginx routes VLESS traffic to it.
+
+For the Marzban architecture (Xray on 443 directly), see `marzban.md`.
 
 ---
 
@@ -120,9 +131,10 @@ Create `/opt/xray/config/config.json`. Replace all `<PLACEHOLDER>` values.
 ```
 
 **Notes:**
-- `listen: "127.0.0.1"` — Xray is NOT public; Angie proxies to it
+- `listen: "127.0.0.1"` — Xray is NOT public; nginx proxies to it
 - `port: 11443` — internal port; adjust if conflicting
-- `acceptProxyProtocol: true` — required to receive real client IP from Angie
+- `acceptProxyProtocol: true` — required to receive real client IP from nginx
+- `alpn: ["h2", "http/1.1"]` — h2 is fine here since nginx terminates TLS before sending to Xray; if you add `fallbacks` instead of proxy_protocol, drop "h2" (nginx 1.18 does not support h2c as a fallback backend)
 - Cert files are mounted from the host where certbot writes them
 
 ---

@@ -4,6 +4,10 @@
 Domain `proxy.example.com` already pointing to server IP via Cloudflare DNS-only
 (grey-cloud). User wants Marzban with SSH-tunnel dashboard access. Client: Windows.
 
+> nginx is used as the web server. Angie is an alternative on Debian 12 but
+> does not have an apt repository for Ubuntu 22.04. Confirm Angie is available
+> for the target distro before using it.
+
 ---
 
 ## Phase 0 — Triage
@@ -110,16 +114,15 @@ Docker installed via apt repository. Verified running.
 
 ---
 
-## Phase 8 — Angie + TLS (before Xray, to get cert first)
+## Phase 8 — nginx + TLS (before Marzban/Xray, to get cert first)
 
-Angie installed. Port 80 opened temporarily for certbot standalone.
+nginx installed. certbot uses webroot plugin (nginx stays running on port 80).
 
 ```bash
 🌐 VPS
-apt-get install -y certbot
-systemctl stop angie
-certbot certonly --standalone -d proxy.example.com
-systemctl start angie
+apt-get install -y nginx certbot
+mkdir -p /var/www/html
+certbot certonly --webroot -w /var/www/html -d proxy.example.com
 ```
 
 ```
@@ -136,25 +139,29 @@ systemctl start angie
 
 ---
 
-## Phase 7 — Xray TLS Setup
+## Phase 7 + 9 — Marzban + Xray
 
-UUID generated locally. Config created at `/opt/xray/config/config.json`
-with `listen: 127.0.0.1`, `port: 11443`, TLS cert paths mounted.
+Marzban manages Xray directly. Xray binds port 443 with TLS. No separate
+Xray container is needed.
 
+`.env`:
 ```
-📋 PASTE OUTPUT: check_xray.sh
-  [OK]  Container 'xray' is running
-  [OK]  Xray config passes validation
-  [OK]  Port 11443 is listening (loopback)
-  [OK]  No errors in last 100 log lines
+UVICORN_HOST = "127.0.0.1"
+UVICORN_PORT = 8000
+XRAY_JSON = "/var/lib/marzban/xray_config.json"
+SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"
+XRAY_SUBSCRIPTION_URL_PREFIX = "https://proxy.example.com"
 ```
 
----
+Xray config (`/var/lib/marzban/xray_config.json`) uses TLS on port 443
+directly with the Let's Encrypt cert. See `references/marzban.md` for the
+full template.
 
-## Phase 9 — Marzban
-
-Marzban installed via Docker Compose. `.env` set with `UVICORN_HOST = "127.0.0.1"`.
-Admin created via CLI.
+Admin created interactively via CLI (user ran this themselves):
+```bash
+🌐 VPS
+sudo docker compose exec -it marzban marzban-cli admin create --sudo
+```
 
 ```
 📋 PASTE OUTPUT: check_marzban.sh
@@ -162,7 +169,7 @@ Admin created via CLI.
   [OK]  UVICORN_HOST = 127.0.0.1 (loopback — correct)
   [OK]  Container 'marzban' is running
   [OK]  Port 8000 is bound to loopback only
-  [OK]  Dashboard reachable at http://127.0.0.1:8000/
+  [OK]  Dashboard reachable at http://127.0.0.1:8000/dashboard/
 ```
 
 **SSH tunnel to access dashboard:**
@@ -173,6 +180,9 @@ ssh -N -L 8000:127.0.0.1:8000 root@198.51.100.20
 ```
 
 Browser: `http://localhost:8000/dashboard/` → Marzban login page.
+
+> Note: navigating to `http://localhost:8000/` (without `/dashboard/`) shows
+> a loading animation that never resolves. The UI entrypoint is `/dashboard/`.
 
 ---
 
@@ -197,7 +207,6 @@ vless://a1b2c3d4-e5f6-7890-abcd-ef1234567890@proxy.example.com:443?security=tls&
 | Port | Public? | Service |
 |------|---------|---------|
 | 22 | Yes | SSH (key-only) |
-| 80 | Yes | HTTP → HTTPS redirect |
-| 443 | Yes | Angie → Xray VLESS TLS |
+| 80 | Yes | nginx: HTTP → HTTPS redirect + certbot |
+| 443 | Yes | Xray VLESS TLS (Marzban-managed) |
 | 8000 | No | Marzban (loopback, SSH tunnel) |
-| 11443 | No | Xray internal (loopback) |

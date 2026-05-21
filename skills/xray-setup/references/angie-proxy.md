@@ -1,24 +1,39 @@
-# Angie Proxy (TLS Termination + HTTPS Fallback)
+# nginx / Angie Proxy (TLS Termination + HTTPS Fallback)
 
 ## What this file covers
 
-Angie is used in the TLS path (Path B / C) to:
+nginx (or Angie) is used in the TLS path (Path B / C) when Xray is NOT
+managed by Marzban — specifically to:
 1. Terminate TLS on port 443
-2. Distinguish VLESS traffic from regular HTTPS traffic
-3. Forward VLESS connections to Xray via `proxy_protocol`
-4. Serve a normal-looking HTTPS website for all other connections (camouflage)
+2. Forward VLESS connections to Xray via `proxy_protocol`
+3. Serve a fallback HTTPS website for non-VLESS connections
 
-For the REALITY path (Path A), Angie is not needed — skip this document.
+**If you are using Marzban**, Xray handles TLS on port 443 directly. You only
+need nginx for port 80 (certbot ACME challenges and HTTP→HTTPS redirect) and
+optionally port 8080 as a fallback backend. See `marzban.md`.
 
-## Angie vs nginx
+For the REALITY path (Path A), nginx is not needed — skip this document.
 
-Angie is a maintained fork of nginx (by the original nginx developers).
-Its configuration syntax is identical to nginx. All examples below work for
-both. Replace `angie` with `nginx` and the commands are the same.
+## nginx vs Angie
+
+**Use nginx** for Ubuntu 22.04 LTS (jammy) and earlier Ubuntu releases —
+Angie does not have an apt repository for these distros.
+
+Angie is a maintained nginx fork with identical config syntax. Use it on
+Ubuntu 24.04+ or Debian 12+ if you prefer it. All config examples below
+work unchanged for both — just replace `nginx` with `angie` in service commands.
 
 ---
 
-## Install Angie (Ubuntu/Debian)
+## Install nginx (Ubuntu/Debian — recommended)
+
+```bash
+🌐 VPS
+sudo apt-get install -y nginx
+sudo systemctl enable nginx
+```
+
+## Install Angie (Ubuntu 24.04 / Debian 12+ only)
 
 ```bash
 🌐 VPS
@@ -33,13 +48,8 @@ sudo apt-get install -y angie
 sudo systemctl enable angie
 ```
 
-If you prefer nginx:
-
-```bash
-🌐 VPS
-sudo apt-get install -y nginx
-sudo systemctl enable nginx
-```
+> Angie has no Ubuntu 22.04 (jammy) repository. If you get a 404 on `apt-get update`,
+> use nginx instead.
 
 ---
 
@@ -197,21 +207,22 @@ bash scripts/check_tls.sh <YOUR_DOMAIN>
 
 ## cert auto-renewal hook
 
-After certbot renews, reload Angie:
+After certbot renews, reload nginx (or angie):
 
 ```bash
 🌐 VPS
-sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-angie.sh << 'EOF'
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh << 'EOF'
 #!/bin/bash
-systemctl reload angie
+systemctl reload nginx
 EOF
-sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-angie.sh
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
 ```
 
 ---
 
 ## See also
 
-- `xray-vless-tls.md` — Xray config that Angie proxies to
-- `cloudflare.md` — if Cloudflare is in front of Angie
-- `troubleshooting.md` — TLS cert errors, 502 from Angie
+- `xray-vless-tls.md` — Xray config that nginx proxies to
+- `marzban.md` — Marzban-managed Xray (TLS handled by Xray directly)
+- `cloudflare.md` — if Cloudflare is in front of nginx
+- `troubleshooting.md` — TLS cert errors, 502 from nginx
