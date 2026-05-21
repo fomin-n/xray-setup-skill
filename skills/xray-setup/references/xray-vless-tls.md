@@ -187,7 +187,7 @@ Create `/opt/xray/docker-compose.yml`:
 ```yaml
 services:
   xray:
-    image: ghcr.io/xtls/xray-core:latest
+    image: ghcr.io/xtls/xray-core:latest  # pin to a version (e.g., :24.12.31) for reproducibility
     container_name: xray
     restart: unless-stopped
     ports:

@@ -19,6 +19,7 @@ echo ""
 
 # x25519 keypair (requires Docker or local xray binary)
 echo "--- x25519 Keypair (for VLESS REALITY) ---"
+echo "  (using ghcr.io/xtls/xray-core — verify the image digest if security-critical)"
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
   X25519=$(docker run --rm ghcr.io/xtls/xray-core x25519 2>/dev/null)
   PRIVATE_KEY=$(echo "$X25519" | grep "Private key" | awk '{print $NF}')

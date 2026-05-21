@@ -9,6 +9,12 @@ else is silently dropped.
 ufw is simpler for beginners but iptables gives finer control and is
 what most Xray guides use. Both are covered below.
 
+> **IPv6 note**: `iptables` rules apply to IPv4 only. If your VPS has a
+> public IPv6 address, you must also apply rules via `ip6tables`, or use ufw
+> (which handles both). Check for IPv6: `ip -6 addr show | grep -v "::1"`.
+> If a public IPv6 address is present and you only set iptables rules, all
+> IPv6 ports remain open.
+
 ---
 
 ## Port plan by scenario
@@ -91,7 +97,10 @@ Add to `/etc/rc.local` or a systemd unit if `iptables-persistent` is not used.
 
 ---
 
-## ufw method (simpler alternative)
+## ufw method (simpler, recommended for dual-stack servers)
+
+ufw configures both iptables and ip6tables, so it is safer on servers
+with a public IPv6 address.
 
 ```bash
 🌐 VPS

@@ -258,6 +258,14 @@ Show the port plan as a table, then ask for confirmation before applying:
 | 80 | IN TCP | TLS cert renewal (TLS path only) |
 | 443 | IN TCP | VLESS (REALITY or TLS) |
 
+Check if the server has a public IPv6 address:
+```
+ssh -p PORT USER@HOST 'ip -6 addr show | grep -v "::1"'
+```
+
+If IPv6 is present, prefer ufw (covers both IPv4 and IPv6) or additionally
+apply `ip6tables` rules. See `references/firewall.md` for the IPv6 note.
+
 Apply rules via SSH:
 ```
 ssh -p PORT USER@HOST 'bash -s' << 'RULES'

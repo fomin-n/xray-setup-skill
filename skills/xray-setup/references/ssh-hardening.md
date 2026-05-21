@@ -84,6 +84,18 @@ Only after Step 3 succeeds in your second terminal:
 🌐 VPS
 sudo sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
 sudo sed -i 's/^#*ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
+```
+
+> **Note on UsePAM**: Setting `UsePAM no` disables PAM entirely. On some systems
+> this also disables PAM-based session limits, umask settings, and audit logging.
+> If you have other PAM-dependent services or monitoring, skip this line. The two
+> settings above (`PasswordAuthentication no` and `ChallengeResponseAuthentication
+> no`) are sufficient to disable password login. Set `UsePAM no` only if you
+> have reviewed what PAM modules are active on your system.
+>
+> If you do set it:
+```bash
+🌐 VPS
 sudo sed -i 's/^#*UsePAM.*/UsePAM no/' /etc/ssh/sshd_config
 ```
 

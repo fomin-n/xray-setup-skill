@@ -127,8 +127,11 @@ sudo apt-get install -y qrencode  # Linux
 qrencode -t ANSIUTF8 "vless://<UUID>@..."
 ```
 
-Or paste the URI into an online QR generator (only if you're comfortable with
-the URI being sent to a third party; it does not contain the private key).
+Or paste the URI into an online QR generator — but note that the VLESS URI
+contains your UUID, which is an auth credential. Only use an online generator
+for a specific user's URI (not the server's private key), and consider that the
+UUID may be logged by the third-party service. The local `qrencode` approach
+above avoids this entirely.
 
 ---
 

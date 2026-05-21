@@ -42,6 +42,10 @@ sudo curl -o docker-compose.yml \
   https://raw.githubusercontent.com/Gozargah/Marzban/master/docker-compose.yml
 ```
 
+> This fetches from the `master` branch. For a reproducible, auditable setup
+> pin to a specific release tag or commit SHA:
+> `https://raw.githubusercontent.com/Gozargah/Marzban/v0.x.x/docker-compose.yml`
+
 Review it before running:
 
 ```bash
@@ -116,6 +120,13 @@ printf '\n\n' | sudo docker exec -i \
 The `printf '\n\n'` provides Enter keypresses to skip optional interactive
 prompts after username/password are set. Container name may vary — check with
 `docker ps`.
+
+> **Security note**: The `-e MARZBAN_ADMIN_PASSWORD=...` form passes the password
+> via the environment and it is briefly visible in the process table (`ps aux`).
+> On a single-user VPS this is acceptable. The password will also appear in your
+> local shell history — clear it with `history -d $(history 1)` after running,
+> or prefix the command with a space if your shell is configured to ignore
+> space-prefixed commands.
 
 ---
 
@@ -192,7 +203,7 @@ Notes:
 ```yaml
 services:
   marzban:
-    image: gozargah/marzban:latest
+    image: gozargah/marzban:latest  # pin to a version tag for reproducibility
     restart: always
     env_file: .env
     network_mode: host

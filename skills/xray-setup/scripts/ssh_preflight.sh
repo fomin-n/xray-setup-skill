@@ -72,6 +72,11 @@ echo ""
 echo "Server host key fingerprint:"
 ssh-keyscan -p "$PORT" -T 5 "${TARGET#*@}" 2>/dev/null | ssh-keygen -lf - 2>/dev/null | \
   awk '{print "  " $0}' || warn "Could not retrieve host key fingerprint"
+echo ""
+echo "  NOTE: StrictHostKeyChecking=accept-new was used above, so the host key"
+echo "  was accepted automatically on first connect. If this is a new server,"
+echo "  verify the fingerprint above matches what your VPS provider shows in"
+echo "  its console (Hetzner: 'Remote Console', DigitalOcean: 'Access' tab)."
 
 echo ""
 echo "=== SSH preflight complete ==="

@@ -179,8 +179,9 @@ docker pull ghcr.io/xtls/xray-core:latest
 
 **Resolution (Option B — use DockerHub mirror if available):**
 
-Edit docker-compose.yml to use `teddysun/xray` from DockerHub (community
-maintained, verify the image before use).
+Edit docker-compose.yml to use an alternative image. `teddysun/xray` is
+community-maintained — verify its Dockerfile and provenance before use;
+it has lower supply-chain assurance than the official `ghcr.io/xtls/xray-core`.
 
 **Resolution (Option C — wait):**
 

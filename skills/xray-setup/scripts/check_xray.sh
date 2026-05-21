@@ -47,11 +47,18 @@ CONFIG_FILE="$XRAY_DIR/config/config.json"
 if [ -f "$CONFIG_FILE" ]; then
   ok "config.json found at $CONFIG_FILE"
   # Validate JSON syntax
-  if python3 -c "import json; json.load(open('$CONFIG_FILE'))" 2>/dev/null; then
+  if python3 - "$CONFIG_FILE" <<'PYEOF' 2>/dev/null
+import json, sys
+json.load(open(sys.argv[1]))
+PYEOF
+  then
     ok "config.json is valid JSON"
   else
     fail "config.json has JSON syntax errors"
-    python3 -c "import json; json.load(open('$CONFIG_FILE'))" 2>&1
+    python3 - "$CONFIG_FILE" <<'PYEOF' 2>&1
+import json, sys
+json.load(open(sys.argv[1]))
+PYEOF
   fi
   # Test with Xray config validator
   docker exec "$CONTAINER_NAME" xray -test -c /etc/xray/config.json 2>&1 && \
