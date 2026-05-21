@@ -1,5 +1,7 @@
 # xray-setup-skill
 
+![xray-setup-skill cover](cover.png)
+
 A Claude Code skill for guided, secure, low-footprint VLESS/Xray and Marzban setup on a remote VPS.
 
 - runs on your **local machine** — no tools installed on the VPS beyond what the setup deploys
@@ -17,10 +19,43 @@ A Claude Code skill for guided, secure, low-footprint VLESS/Xray and Marzban set
 - **Xray-core** running in Docker
 - **VLESS** with REALITY (no domain needed) or TLS (with domain)
 - Optional **Marzban** management panel, accessible via SSH tunnel only by default
-- **Angie** as TLS terminator with HTTPS fallback site
+- **nginx** (or Angie) as TLS terminator with HTTPS fallback site
 - Hardened SSH posture (ED25519 keys, no password auth)
 - Strict iptables firewall (allowlist approach)
 - Client configuration for iOS, Android, Windows, macOS, Linux
+
+## Usage examples
+
+**Fresh VPS, no domain — VLESS + REALITY in minutes:**
+
+```
+/xray-setup fresh
+```
+
+> I have a new Hetzner VPS at 203.0.113.50. No domain. I want VLESS for
+> personal use on my iPhone and MacBook.
+
+The skill detects the server state, generates x25519 credentials locally,
+proposes a setup profile, then stages the full install — SSH hardening,
+firewall, Docker, Xray REALITY config — with a validation gate after each phase.
+
+---
+
+**Existing VPS with a domain — VLESS + TLS + Marzban:**
+
+```
+/xray-setup fresh
+```
+
+> I have a VPS with Ubuntu 22.04 at proxy.example.com (Cloudflare DNS-only).
+> I want VLESS with TLS and Marzban so I can manage multiple family members.
+> Dashboard should not be public.
+
+The skill checks DNS, issues a Let's Encrypt cert, deploys Marzban with
+`UVICORN_HOST = 127.0.0.1`, and sets up SSH tunnel access to the dashboard.
+QR codes for all users are available via the Marzban subscription link.
+
+---
 
 ## Supported scenarios
 
