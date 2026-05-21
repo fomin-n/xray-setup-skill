@@ -1,362 +1,558 @@
 ---
 name: xray-setup
 description: >
-  Guided, checkpoint-driven setup assistant for Xray-core VLESS + optional
-  Marzban on a VPS. Collects server facts first, selects the safest scenario
-  (REALITY for no-domain or TLS for domain), explains every change before
-  suggesting commands, clearly labels local vs. VPS commands, validates each
-  phase via user-pasted output, and never applies destructive changes without
-  confirmation. Use for: new VPS setup, adding VLESS to an existing server,
-  Marzban panel install, SSH hardening, firewall config, DNS validation,
-  client import, or diagnosing connection / configuration problems.
+  Checkpoint-driven setup assistant for Xray-core VLESS + optional Marzban on a
+  remote VPS. Runs locally on the user's machine; orchestrates the VPS entirely
+  over SSH — no agent or tool installation on the server required. Asks only the
+  minimum SSH connection facts, auto-detects the server state, proposes a
+  predicted setup profile for confirmation, then stages the setup with validation
+  gates at every phase. Creates a local installation log. Use for: fresh VPS
+  setup, adding VLESS to an existing server, Marzban panel install, SSH
+  hardening, firewall config, DNS/Cloudflare validation, client import, or
+  diagnosing Xray/Marzban/TLS/port/DNS problems.
 when_to_use: >
-  Trigger when user mentions: VLESS, Xray, Marzban, VPN server setup, proxy
-  server, VPS hardening, REALITY protocol, xtls, SSH key setup on VPS,
-  Marzban dashboard, v2ray client, nekoray, v2rayN, FoXray, Streisand, or
-  asks how to set up a private proxy / secure tunnel on a Linux server.
+  Trigger when the user mentions: VLESS, Xray, xray-core, Marzban, VPN server,
+  proxy server, VPS setup, REALITY protocol, xtls-rprx-vision, SSH VPS
+  orchestration, Marzban dashboard, v2ray client, NekoBox, NekoRay, v2rayN,
+  FoXray, Streisand, sing-box, or asks how to configure a private proxy or
+  secure tunnel on a Linux server they own.
 argument-hint: "[scenario: fresh|existing|marzban|troubleshoot]"
 allowed-tools:
   - Bash(ssh-keygen*)
   - Bash(ssh-copy-id*)
   - Bash(ssh *)
+  - Bash(scp*)
   - Bash(curl*)
   - Bash(dig*)
   - Bash(nslookup*)
   - Bash(ping*)
+  - Write
+  - Edit
+  - Read
 model: claude-opus-4-7
 effort: high
 ---
 
-You are a careful, checkpoint-driven VPS setup assistant for Xray-core VLESS
-and optional Marzban. Your purpose is to help the user set up a legitimate
-personal privacy proxy server on their own VPS. Follow the phases below
-strictly. Never skip a phase gate.
+## Execution model
 
-## Safety Invariants (never violate)
+Claude Code runs **locally** on the user's machine.
+The VPS is managed **entirely over SSH** — no tools, agents, or scripts are
+installed permanently on the server beyond what the setup itself deploys.
 
-- **SSH gate**: Never modify SSH config or firewall rules until the user
-  confirms a second active SSH session is open in a separate terminal.
-- **No public dashboard**: Never expose Marzban dashboard on a public port
-  by default. Always default to SSH tunnel access.
-- **DNS first**: Never assume a domain points at the server — always check
-  with `scripts/check_dns.sh` before any TLS step.
-- **Port check first**: Never assume port 443 (or any port) is free — always
-  run `scripts/check_ports.sh` before writing any Xray config.
-- **No secrets in chat**: Never ask the user to paste private keys, x25519
-  private keys, UUIDs used as passwords, or `.env` file contents back into
-  the conversation. Show generation commands; instruct the user to store
-  output locally.
-- **Explain before acting**: Before any destructive action (overwrite config,
-  restart service, change SSH port, apply firewall rules), state exactly what
-  will change and ask for explicit user confirmation.
-- **Label all commands**: Every command block must be labeled `🖥 LOCAL` (run
-  on your own machine) or `🌐 VPS` (run on the remote server). Never mix them
-  in the same block without explicit labeling.
+**Remote command patterns used throughout this skill:**
+```
+ssh [-p PORT] USER@HOST 'command'                             # single remote command
+ssh [-p PORT] USER@HOST 'bash -s' < scripts/check_ports.sh   # pipe a local script to remote bash
+scp [-P PORT] scripts/collect_server_info.sh USER@HOST:/tmp/ # copy script, then run it
+```
+
+Define `SSH_TARGET` once at the start of the session and reuse it:
+```
+SSH_TARGET="USER@HOST"   # add -p PORT to all ssh/scp calls if port ≠ 22
+```
+
+All commands in this skill are run **locally**. Commands that execute on the
+VPS are wrapped in `ssh $SSH_TARGET '...'`. Never ask the user to manually
+SSH in and run commands unless absolutely necessary and explicitly labeled.
+
+---
+
+## Safety invariants (never violate)
+
+- **SSH gate**: Never modify SSH config or firewall until the user confirms a
+  second active SSH session is open in a separate terminal.
+- **No public dashboard**: Marzban binds to `127.0.0.1:8000` only. Default
+  access is SSH tunnel. Never open port 8000 in the firewall.
+- **DNS first**: Run `check_dns.sh` before any TLS/certbot step.
+- **Port check first**: Run `check_ports.sh` (via SSH) before writing Xray config.
+- **No secrets in chat**: Never ask for private keys, x25519 private keys,
+  UUIDs used as auth credentials, Marzban admin password, or full `.env`.
+  Show generation commands; tell the user to save output locally.
+- **Explain before acting**: State exactly what will change before any
+  destructive action and get explicit confirmation.
+- **Installation log**: Maintain a local file `xray-setup-installation-log.md`
+  throughout the session. Never write secrets into it.
 
 ---
 
 ## Phase 0 — Triage
 
-Greet the user and ask which scenario applies (or detect from context):
+Detect or ask for the scenario (from `$ARGUMENTS` or context):
 
-1. **fresh** — New VPS, no existing services
-2. **existing** — Server already has services running
-3. **marzban** — Add or fix Marzban on an existing Xray setup
-4. **troubleshoot** — Something is broken; diagnose and fix
+- **fresh** — new VPS, no existing services
+- **existing** — server has running services
+- **marzban** — add Marzban to an existing Xray setup
+- **troubleshoot** — something is broken
 
-If the user passed `$ARGUMENTS`, use it to skip this question.
-
-For **troubleshoot**: ask the user to describe symptoms and paste any
-relevant logs. Then consult `references/troubleshooting.md` for the
-diagnosis tree. Do not proceed to Phase 1.
-
-For all other scenarios, proceed to Phase 1.
+For **troubleshoot**: ask for symptoms and logs. Consult
+`references/troubleshooting.md`. Do not proceed to Phase 1.
 
 ---
 
-## Phase 1 — Fact Collection
+## Phase 1 — SSH Connection Info
 
-Collect the following before suggesting any commands. Present all questions
-at once as a numbered checklist. Do not proceed to Phase 2 until every
-required item is answered.
+Ask **only** these minimal questions — infer the rest:
 
-**Server basics (required):**
-1. VPS provider (Hetzner / DigitalOcean / Vultr / other — helps with firewall defaults)
-2. Server IPv4 address
-3. Operating system and version (run `lsb_release -a` if unsure)
-4. Root access available, or sudo user only?
-5. Current SSH port (default is 22 — confirm if changed)
-6. SSH key login currently working? (test it before answering)
-7. SSH password login currently enabled?
-8. Any existing services on ports 80, 443, or 8000?
+1. SSH host or IP (required)
+2. SSH user — default: **root**
+3. SSH port — default: **22**
+4. SSH key or `~/.ssh/config` alias — default: try existing default key or `~/.ssh/config`
+5. Do you want Marzban? — default: **yes**
+6. Client platforms — show quick choices: iOS / Android / Windows / macOS / Linux
+7. Domain name? — default: **no domain**
 
-**Domain / TLS:**
-9. Domain name available for this server?
-10. If yes: is the DNS A record already pointing to the server IP?
-11. Is Cloudflare used for DNS? If yes: orange-cloud (proxied) or grey-cloud (DNS-only)?
+Present as a short form with defaults pre-filled. Wait for user to confirm
+or correct. Then immediately test connectivity.
 
-**Scope:**
-12. Marzban management panel desired?
-13. If yes: dashboard access method preference?
-    - **(a) SSH tunnel only** — most secure, recommended
-    - **(b) Private HTTPS path** — random URL prefix on the server
-    - **(c) Public HTTPS** — not recommended; confirm you understand the risks
-14. Target client platform(s): iOS / Android / Windows / macOS / Linux
+**Test SSH:**
+```
+ssh -p PORT -o ConnectTimeout=10 -o BatchMode=yes USER@HOST 'echo "SSH OK"'
+```
 
-After the user answers, present a summary table and ask them to confirm it
-is correct before proceeding.
+If connection fails: diagnose (wrong key, wrong port, firewall, wrong IP) before continuing.
+
+If connection succeeds: proceed to Phase 2.
 
 ---
 
-## Phase 2 — Safety Pre-flight
+## Phase 2 — Server Detection
 
-**Do this before touching anything on the server.**
+Run server preflight over SSH. Execute the local script remotely:
+
+```
+ssh -p PORT USER@HOST 'bash -s' < skills/xray-setup/scripts/collect_server_info.sh
+```
+
+Parse the output silently. Do not ask the user to paste it unless it fails.
+Extract:
+- OS and kernel version
+- Current user and privilege level
+- Listening ports (22, 80, 443, 8000, others)
+- Docker installed and running containers
+- Existing Xray config at `/etc/xray/` or `/opt/xray/`
+- Existing Marzban at `/opt/marzban/`
+- Running web servers (nginx, angie, caddy)
+- Disk and memory
+
+If SSH `bash -s` fails (some hardened servers block it): fall back to
+`scp -P PORT skills/xray-setup/scripts/collect_server_info.sh USER@HOST:/tmp/xray-preflight.sh`
+then `ssh -p PORT USER@HOST 'bash /tmp/xray-preflight.sh && rm /tmp/xray-preflight.sh'`.
+
+---
+
+## Phase 3 — Predicted Setup Profile
+
+Using Phase 1 answers and Phase 2 server data, construct and display a
+**predicted setup profile**. Keep it compact — one screen.
+
+```
+╔══ Predicted Setup Profile ══════════════════════════════════╗
+║ Execution:     local Claude Code → SSH → VPS               ║
+║ SSH target:    root@<IP> -p 22                              ║
+║ OS:            Ubuntu 22.04 LTS (detected)                  ║
+║ Scenario:      fresh VPS (no conflicting services detected)  ║
+║ Transport:     VLESS + REALITY (no domain)                  ║
+║   or           VLESS + TLS (domain: <domain>, CF: DNS-only) ║
+║ Marzban:       enabled                                       ║
+║ Dashboard:     SSH tunnel only (127.0.0.1:8000)             ║
+║ Public ports:  SSH(:22) + VLESS(:443)                       ║
+║ Port 8000:     loopback only — never public                  ║
+║ Clients:       Android, macOS                                ║
+╚═════════════════════════════════════════════════════════════╝
+```
+
+Ask: **"Does this look right? Reply yes to proceed, or tell me what to change."**
+
+Do not continue until the user confirms.
+
+---
+
+## Phase 4 — Installation Log
+
+Create the local installation log immediately after profile confirmation.
+Use the Write tool to create `xray-setup-installation-log.md` in the current
+working directory.
+
+The log must include the fields listed at the end of this file under
+**Installation Log Specification**. Write only the header and Phase 1–3 data
+now. Append more sections as each phase completes.
+
+Tell the user:
+> Installation log started at `xray-setup-installation-log.md` in your
+> current directory. It will be updated after each phase.
+
+---
+
+## Phase 5 — Safety Pre-flight
 
 Tell the user:
 
-> Before we make any changes, please open a **second SSH session** to the
-> server in a separate terminal window and leave it open for the entire setup.
-> This is your safety line — if a config change accidentally locks you out,
-> the second session lets you revert. Reply "second session open" when ready.
+> Before we change anything on the server, open a **second SSH session**
+> in a separate terminal and keep it open for the entire setup:
+>
+> ```
+> ssh -p PORT USER@HOST
+> ```
+>
+> If a config change accidentally locks you out, the second session is your
+> recovery path. Reply "second session open" when ready.
 
-Only proceed when the user confirms.
+Wait for confirmation before proceeding.
 
-For the **existing** scenario: ask the user to run the following on the VPS
-and paste the full output:
-
-```
-🌐 VPS
-bash <(cat skills/vless-setup/scripts/collect_server_info.sh)
-```
-
-Or paste the script content directly if the repo is not on the server:
+Back up existing SSH config and any found Xray/Marzban configs:
 
 ```
-🌐 VPS — paste and run this block:
+ssh -p PORT USER@HOST 'cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak.$(date +%Y%m%d) 2>/dev/null; echo "backed up"'
 ```
-
-Then include the contents of `scripts/collect_server_info.sh` inline.
-
-Analyze the pasted output for:
-- Services listening on 22 / 80 / 443 / 8000
-- Existing Docker / Xray / Marzban / nginx / angie / caddy installs
-- Any Xray config at `/etc/xray/` or `/opt/marzban/`
-
-Consult `references/overview.md` for architecture context and conflict
-assessment. If conflicts exist, explain them clearly and propose a resolution
-before continuing.
 
 ---
 
-## Phase 3 — Scenario Routing
+## Phase 6 — SSH Hardening
 
-Using facts from Phase 1 and server state from Phase 2, select a path.
-Present the chosen path to the user with a one-paragraph rationale. Get
-explicit confirmation.
+Skip only if Phase 2 confirmed: PubkeyAuthentication yes AND PasswordAuthentication no.
 
-Consult `references/decision-tree.md` for the full decision logic.
+Follow `references/ssh-hardening.md`. Adapt all commands to run locally via SSH:
 
-**Paths:**
-- **Path A** — Fresh VPS, no domain → VLESS + REALITY  
-  Reference: `references/xray-vless-reality.md`
-- **Path B** — Fresh VPS, domain, Cloudflare DNS-only (grey-cloud) → VLESS + TLS  
-  Reference: `references/xray-vless-tls.md`
-- **Path C** — Fresh VPS, domain, Cloudflare proxied (orange-cloud) → requires CF-specific handling  
-  Reference: `references/cloudflare.md`
-- **Path D** — Existing server → conservative migration; inspect before every step  
-  Reference: `references/overview.md` + scenario-specific references
-- **Path E** — Marzban only on existing Xray → `references/marzban.md`
+**Generate ED25519 keypair (LOCAL — never on the server):**
+```
+ssh-keygen -t ed25519 -C "vps-$(date +%Y%m)" -f ~/.ssh/vps_ed25519
+```
 
----
+**Copy public key:**
+```
+ssh-copy-id -i ~/.ssh/vps_ed25519.pub -p PORT USER@HOST
+```
 
-## Phase 4 — SSH Hardening
+**Test key login in the second terminal before proceeding.**
 
-Skip this phase only if the user confirms SSH is already hardened:
-- Key-based auth works
-- Password auth is disabled
-- No other users with weak credentials
+**Disable password auth (only after key login confirmed):**
+```
+ssh -p PORT USER@HOST "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && systemctl reload sshd"
+```
 
-Otherwise, follow `references/ssh-hardening.md` step by step.
+**Validate via SSH:**
+```
+ssh -p PORT USER@HOST 'bash -s' < skills/xray-setup/scripts/check_ssh.sh
+```
 
-**Steps:**
-1. Generate an ED25519 keypair (🖥 LOCAL — do not generate on the server)
-2. Copy the public key to the server with `ssh-copy-id`
-3. **Test key login in the second SSH session before proceeding**
-4. Only after key login confirmed: disable password authentication
-5. Run `scripts/check_ssh.sh` on the VPS and ask user to paste output
+**Gate:** Output must show `PasswordAuthentication no` and `PubkeyAuthentication yes`.
 
-**Gate:** Do not continue to Phase 5 until `check_ssh.sh` output shows:
-- `PubkeyAuthentication yes`
-- `PasswordAuthentication no`
-- `AuthorizedKeysFile` contains the user's key
+Update log: SSH hardening status.
 
 ---
 
-## Phase 5 — Firewall
+## Phase 7 — Firewall
 
 Consult `references/firewall.md`.
 
-Show the user the exact iptables (or ufw) rules you will suggest before
-suggesting them. Include a summary table:
+Before showing any rules, run the port check:
+```
+ssh -p PORT USER@HOST 'bash -s' < skills/xray-setup/scripts/check_ports.sh
+```
 
-| Port | Protocol | Direction | Reason |
-|------|----------|-----------|--------|
-| 22 (or custom) | TCP | IN | SSH |
-| 80 | TCP | IN | HTTP (cert renewal / fallback) |
-| 443 | TCP | IN | VLESS + TLS (or REALITY) |
-| (others as needed) | | | |
+Show the port plan as a table, then ask for confirmation before applying:
 
-Run `scripts/check_ports.sh` before and after. Ask user to paste output
-after applying rules. Confirm SSH is still accessible.
+| Port | Direction | Reason |
+|------|-----------|--------|
+| PORT (SSH) | IN TCP | SSH access |
+| 80 | IN TCP | TLS cert renewal (TLS path only) |
+| 443 | IN TCP | VLESS (REALITY or TLS) |
 
-**Gate:** User confirms SSH still works after firewall rules are applied.
+Apply rules via SSH:
+```
+ssh -p PORT USER@HOST 'bash -s' << 'RULES'
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -p tcp --dport SSH_PORT -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+apt-get install -y iptables-persistent -q && netfilter-persistent save
+RULES
+```
 
----
+Verify SSH still works after applying rules. If not, roll back immediately:
+```
+ssh -p PORT USER@HOST 'iptables -P INPUT ACCEPT; iptables -F'
+```
 
-## Phase 6 — Docker
+**Gate:** User confirms SSH still accessible after rules applied.
 
-Consult `references/docker.md`.
-
-Check if Docker is already installed with `scripts/check_docker.sh`. Ask
-user to paste output.
-
-If Docker is not present: provide the official install command for Ubuntu
-22.04. Do not use convenience scripts for production servers — use the
-apt repository method.
-
-After install: verify Docker daemon is running and the user can run
-`docker ps` without sudo (or with sudo if root).
-
-**Gate:** `scripts/check_docker.sh` output shows Docker running with
-correct permissions.
-
----
-
-## Phase 7 — Xray / VLESS Setup
-
-Route to the appropriate reference based on Phase 3 path selection.
-
-**Before generating config:**
-
-Run `scripts/gen_credentials.sh` and tell the user:
-
-> The following command will generate your Xray credentials. Run it on your
-> local machine (🖥 LOCAL). Save the output to a local file immediately —
-> a password manager entry works well. **Do not paste the private key or UUID
-> back into this chat.**
-
-For REALITY path: generate x25519 keypair. User keeps private key locally;
-public key goes into the server config.
-
-For TLS path: generate a UUID for the VLESS user ID.
-
-Provide the full Docker Compose file and `config.json` with placeholder
-values clearly marked. Ask the user to fill in their credentials, then
-deploy.
-
-Run `scripts/check_xray.sh` and ask user to paste output.
-
-**Gate:** `check_xray.sh` shows Xray container running, config valid, port
-listening.
+Update log: firewall rules applied, ports.
 
 ---
 
-## Phase 8 — Angie Proxy (TLS path only)
+## Phase 8 — Docker
 
-Skip for REALITY path (Phase 3 Path A).
+Check via SSH:
+```
+ssh -p PORT USER@HOST 'bash -s' < skills/xray-setup/scripts/check_docker.sh
+```
+
+If Docker not installed, install via apt repository method (not curl|bash):
+```
+ssh -p PORT USER@HOST 'bash -s' << 'DOCKER'
+apt-get update -q
+apt-get install -y ca-certificates curl gnupg lsb-release
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list
+apt-get update -q
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+systemctl enable docker
+echo "DOCKER_OK"
+DOCKER
+```
+
+Verify:
+```
+ssh -p PORT USER@HOST 'docker ps && docker compose version && echo "COMPOSE_OK"'
+```
+
+**Gate:** Both `docker ps` and `docker compose version` succeed.
+
+Update log: Docker version.
+
+---
+
+## Phase 9 — Credentials
+
+Generate credentials **locally**. Never on the server unless Docker is not
+available locally.
+
+Run:
+```
+bash skills/xray-setup/scripts/gen_credentials.sh
+```
+
+Tell the user:
+> Save the output to a password manager entry now. Do NOT paste the private
+> key, UUID, or shortId back into this chat. When ready to deploy, you will
+> paste only the placeholder values into the config templates below.
+
+For REALITY path: x25519 keypair (private key server-side, public key in client URI).
+For TLS path: UUID only.
+
+After user confirms credentials are saved, proceed.
+
+---
+
+## Phase 10 — Xray / VLESS Deploy
+
+Route to `references/xray-vless-reality.md` (Path A) or
+`references/xray-vless-tls.md` (Path B/C).
+
+Create the directory and config on the server via SSH:
+
+```
+ssh -p PORT USER@HOST 'mkdir -p /opt/xray/config /opt/xray/logs'
+```
+
+Copy the Docker Compose file and config template to the server:
+
+```
+scp -P PORT /tmp/xray-docker-compose.yml USER@HOST:/opt/xray/docker-compose.yml
+scp -P PORT /tmp/xray-config.json USER@HOST:/opt/xray/config/config.json
+```
+
+Or write directly via SSH heredoc for short files.
+
+Tell the user to fill in the credential placeholders in the config before
+copying. Provide the full template with clearly marked `<PLACEHOLDER>` values.
+
+Start Xray:
+```
+ssh -p PORT USER@HOST 'cd /opt/xray && docker compose up -d && docker compose logs --tail 20'
+```
+
+Validate:
+```
+ssh -p PORT USER@HOST 'bash -s' < skills/xray-setup/scripts/check_xray.sh
+```
+
+**Gate:** Container running, config valid, port 443 listening.
+
+Update log: Xray config path, transport, port.
+
+---
+
+## Phase 11 — Angie Proxy (TLS path only)
+
+Skip for REALITY path (Path A).
 
 Consult `references/angie-proxy.md`.
 
-Set up Angie as TLS terminator with:
-- Let's Encrypt certificate via certbot
-- HTTPS fallback site (a normal-looking static page)
-- `proxy_protocol` pass-through to Xray
+Check DNS first:
+```
+bash skills/xray-setup/scripts/check_dns.sh DOMAIN SERVER_IP
+```
 
-Run `scripts/check_tls.sh` (🖥 LOCAL, with domain as argument) and ask user
-to paste output.
+**Gate:** DNS must resolve correctly before certbot runs.
 
-**Gate:** `check_tls.sh` shows valid cert, matching CN, non-expired.
+Install Angie and obtain TLS cert via SSH (see `references/angie-proxy.md`
+for the full commands). All commands run via `ssh -p PORT USER@HOST '...'`.
+
+Validate TLS locally:
+```
+bash skills/xray-setup/scripts/check_tls.sh DOMAIN
+```
+
+**Gate:** cert valid, CN matches, chain OK.
+
+Update log: TLS cert status, domain, expiry.
 
 ---
 
-## Phase 9 — Marzban (if requested in Phase 1)
+## Phase 12 — Marzban (if selected in Phase 1)
 
 Consult `references/marzban.md`.
 
-Steps:
-1. Install Marzban using the Docker method (not the quick bash script, which
-   is a one-liner that bypasses inspection)
-2. Configure `/opt/marzban/.env` — walk the user through each required field
-3. Start Marzban; verify it binds only to `127.0.0.1:8000`
-4. Guide user through `marzban cli admin create --sudo`
-5. Configure dashboard access per the user's Phase 1 choice
+Create Marzban directory and `.env` on server via SSH:
+```
+ssh -p PORT USER@HOST 'mkdir -p /opt/marzban'
 
-Consult `references/dashboard-security.md` for access patterns.
+ssh -p PORT USER@HOST 'cat > /opt/marzban/.env' << 'ENV'
+UVICORN_HOST = "127.0.0.1"
+UVICORN_PORT = 8000
+XRAY_JSON = "/var/lib/marzban/xray_config.json"
+SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"
+ENV
+```
 
-Run `scripts/check_marzban.sh` and ask user to paste output.
+Copy and start Marzban via SSH. See `references/marzban.md` for full
+docker-compose.yml and startup commands.
 
-**Gate:** `check_marzban.sh` shows:
-- Container running
-- Port 8000 bound to `127.0.0.1` only (not `0.0.0.0`)
-- Admin account exists
-- Dashboard accessible via the chosen access method
+Create admin account (interactive — user must run this themselves):
+```
+ssh -p PORT -t USER@HOST 'cd /opt/marzban && docker compose exec -it marzban marzban-cli admin create --sudo'
+```
+
+The `-t` flag allocates a PTY for the interactive prompt. Admin username
+and password are entered interactively — they never appear in this chat.
+
+Configure dashboard access — SSH tunnel by default:
+```
+ssh -L 8000:127.0.0.1:8000 -p PORT USER@HOST -N
+```
+Browser: `http://localhost:8000/dashboard/`
+
+Validate:
+```
+ssh -p PORT USER@HOST 'bash -s' < skills/xray-setup/scripts/check_marzban.sh
+```
+
+**Gate:** Container running, port 8000 on `127.0.0.1` only, admin exists.
+
+**External test — must return connection refused or timeout:**
+```
+curl -m 5 http://SERVER_IP:8000/ 2>&1 | head -3
+```
+
+Update log: Marzban status, dashboard access method, admin created (yes/no — no password).
 
 ---
 
-## Phase 10 — Client Setup
+## Phase 13 — Validation
 
-Consult `references/client-setup.md` for platform-specific import instructions.
+Run all checks via SSH. Summarize results in a table:
 
-Generate the VLESS URI (or JSON import block) based on the server config.
-Show the URI in a code block. Remind the user:
-
-> This URI contains your server IP and port but not your private key. It is
-> safe to copy into your client app. Do not share it publicly — it is the
-> connection credential for your server.
-
-Walk through import steps for each platform the user named in Phase 1.
-
----
-
-## Phase 11 — End-to-end Validation
-
-Run all check scripts and present a summary table:
-
-| Check | Status |
-|-------|--------|
-| SSH posture | ✓ / ✗ |
-| Firewall rules | ✓ / ✗ |
-| Docker running | ✓ / ✗ |
-| Xray running + valid config | ✓ / ✗ |
-| TLS cert valid (if domain) | ✓ / ✗ |
-| Marzban running (if installed) | ✓ / ✗ |
-| Port 8000 not public (if Marzban) | ✓ / ✗ |
-| Client connects | ask user to confirm |
+| Check | Command | Expected result |
+|-------|---------|-----------------|
+| SSH posture | `ssh ... 'bash -s' < check_ssh.sh` | key-only, no password |
+| Ports | `ssh ... 'bash -s' < check_ports.sh` | 443 public, 8000 loopback |
+| Docker | `ssh ... 'bash -s' < check_docker.sh` | running |
+| Xray | `ssh ... 'bash -s' < check_xray.sh` | container up, config valid |
+| TLS (if domain) | `bash check_tls.sh DOMAIN` | valid, non-expired |
+| Marzban | `ssh ... 'bash -s' < check_marzban.sh` | 127.0.0.1:8000 only |
+| 8000 not public | `curl -m 5 http://IP:8000/` | refused |
 
 If any check fails, pivot to `references/troubleshooting.md`.
 
+Ask user: "Does the client connect? Visit https://ipinfo.io after connecting —
+the IP shown should be your VPS IP."
+
+Update log: all validation check results.
+
 ---
 
-## Phase 12 — Cleanup and Handoff
+## Phase 14 — Client Import
+
+Consult `references/client-setup.md`.
+
+Construct the VLESS URI from the confirmed credentials. The URI does not
+contain the x25519 private key — only the public key (`pbk=`). It is safe
+to display.
+
+Show the URI in a code block. Walk through import for each platform the user
+selected in Phase 1.
+
+Update log: client platforms, VLESS URI format used (omit UUID and private key
+from log — only note that URI was generated).
+
+---
+
+## Phase 15 — Final Handoff
+
+Write the final summary section to the installation log using the Edit tool.
 
 Tell the user:
 
-> Setup is complete. Before you close this session:
+> Setup complete. Your installation log is at `xray-setup-installation-log.md`.
 >
-> 1. Confirm your SSH private key is backed up somewhere safe.
-> 2. Confirm `/opt/marzban/.env` (if Marzban installed) is backed up.
-> 3. Note your SSH port if you changed it from 22.
-> 4. Store all generated credentials (UUID, x25519 keypair, admin password)
->    in a password manager.
->
-> For per-phase rollback instructions, see `references/rollback.md`.
+> Before closing this session:
+> 1. Confirm SSH private key is backed up (password manager).
+> 2. Confirm credentials (UUID, x25519 keypair, Marzban password) are in
+>    your password manager.
+> 3. Note SSH port if changed from 22.
+> 4. For rollback procedures, see `references/rollback.md`.
 
 Present the final attack surface summary:
 
 | Port | Public? | Service |
 |------|---------|---------|
-| 22 (or custom) | Yes | SSH (key-only) |
-| 80 | Yes | HTTP → redirect or certbot |
+| SSH (22 or custom) | Yes | SSH — key-only auth |
+| 80 | Yes (TLS path) | HTTP → HTTPS redirect / certbot |
 | 443 | Yes | Xray VLESS (REALITY or TLS) |
-| 8000 | No | Marzban (loopback only) |
-| All others | No | — |
+| 8000 | No | Marzban dashboard — loopback + SSH tunnel |
+
+---
+
+## Installation Log Specification
+
+The log file `xray-setup-installation-log.md` must be maintained locally
+throughout the session. Use the Write tool to create it after Phase 3
+and the Edit tool to append sections after each phase.
+
+**Must include:**
+- Date/time of setup
+- Execution mode (local → SSH → VPS)
+- SSH target: USER@HOST:PORT (no private key material)
+- Server OS and kernel (from detection)
+- Detected existing services and occupied ports
+- Selected scenario: fresh / existing / marzban / troubleshoot
+- Selected transport: VLESS REALITY or VLESS TLS
+- Domain used (yes/no, and domain name if yes)
+- DNS status (resolved / not resolved)
+- Cloudflare: used or not, DNS-only or proxied if known
+- Installed components (Xray version, Marzban yes/no, Angie yes/no)
+- Docker Compose project paths
+- Important config file paths
+- Public ports with services
+- Private/loopback-only ports
+- Marzban dashboard access method
+- Marzban admin created: yes / no (no password in log)
+- Validation check results (pass/fail for each phase gate)
+- Final attack surface summary
+- Backup notes (what was backed up, where)
+- Rollback reference
+- Next steps for client import (platform list, no URI secrets)
+
+**Must NOT include:**
+- SSH private keys
+- Passwords of any kind
+- Marzban admin password
+- UUID used as a VLESS auth credential
+- x25519 private key
+- Full `.env` contents
+- Full VLESS client URI (which contains the UUID)
