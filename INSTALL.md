@@ -3,35 +3,35 @@
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) CLI installed
-- Claude Code version that supports skills (`~/.claude/skills/`)
 
 ## Install (personal scope)
 
 ```bash
+mkdir -p ~/.claude/skills
 cp -r skills/xray-setup ~/.claude/skills/
 ```
 
-Verify the skill is available:
+> If `~/.claude/skills/` did not exist before this command, restart Claude Code
+> so it picks up the new skills directory.
 
-```bash
-claude --list-skills 2>/dev/null | grep xray-setup || echo "Restart Claude Code and type /xray-setup to confirm"
-```
+Verify the skill is available by typing `/xray-setup` in any Claude Code session.
 
 ## Use as project skill
 
-If you want the skill available only within a specific project directory:
+To make the skill available only within a specific project:
 
 ```bash
 mkdir -p /path/to/your/project/.claude/skills/
 cp -r skills/xray-setup /path/to/your/project/.claude/skills/
 ```
 
-## Update
+The skill is active when Claude Code is opened inside that project directory.
 
-Pull the latest version and re-copy:
+## Update
 
 ```bash
 git pull
+rm -rf ~/.claude/skills/xray-setup
 cp -r skills/xray-setup ~/.claude/skills/
 ```
 
