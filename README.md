@@ -2,8 +2,6 @@
 
 A Claude Code skill for guided, secure, low-footprint VLESS/Xray and Marzban setup on a remote VPS.
 
-This is **not** a blind one-shot installer. It is a checkpoint-driven setup assistant that:
-
 - runs on your **local machine** — no tools installed on the VPS beyond what the setup deploys
 - orchestrates the remote VPS entirely **over SSH** using `ssh user@host '...'` and `bash -s` piping
 - asks for minimal SSH connection info, then auto-detects server state
